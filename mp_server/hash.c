@@ -163,7 +163,7 @@ static void print128_num(__m128i var)
 
 /* minor changes: hard code lookup_struct */
 uint16_t
-em_get_ipv4_dst_port(void *ipv4_hdr, uint16_t portid, struct rte_hash *flow_table)
+em_get_ipv4_dst_port(void *ipv4_hdr, struct rte_hash *flow_table)
 {
 	int ret = 0;
 	union ipv4_5tuple_host key;
@@ -224,7 +224,10 @@ em_get_ipv4_dst_port(void *ipv4_hdr, uint16_t portid, struct rte_hash *flow_tabl
 		printf("interface out: %d\n", entry.if_out);
 		rte_delay_us(200);
 		#endif
+	} else if (ret < 0) {
+		fprintf(stderr, "invalid hash lookup argument\n");
+		exit(-1);
 	}
 
-	return (ret < 0) ? portid : ipv4_l3fwd_out_if[ret];
+	return ipv4_l3fwd_out_if[ret];
 }
