@@ -7,7 +7,7 @@ APP = mp_server
 # all source are stored in SRCS-y
 SRCS-y := main.c init.c args.c
 
-CFLAGS += -I../shared
+CFLAGS += -I..
 
 PKGCONF ?= pkg-config
 

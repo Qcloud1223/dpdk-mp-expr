@@ -7,7 +7,7 @@ APP = mp_client
 # all source are stored in SRCS-y
 SRCS-y := client.c
 
-CFLAGS += -I../shared
+CFLAGS += -I..
 
 PKGCONF ?= pkg-config
 
