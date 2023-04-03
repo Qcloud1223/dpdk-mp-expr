@@ -13,6 +13,8 @@
 #include <rte_tcp.h>
 
 #include "hash.h"
+// for num_clients
+#include "init.h"
 
 #define NB_SOCKETS 8
 #define L3FWD_HASH_ENTRIES		(1024*1024*4)
@@ -55,7 +57,6 @@ union ipv4_5tuple_host {
 
 struct rte_hash *ipv4_l3fwd_em_lookup_struct[NB_SOCKETS];
 // TODO: support dynamic worker count
-unsigned worker_cnt = 2;
 static uint32_t flow_cnt;
 
 static inline uint32_t
@@ -86,7 +87,7 @@ void fill_hash_table_from_trace(const char *pcap)
 }
 
 /* largely borrowed from examples/l3fwd/l3fwd_em.c */
-void setup_hash()
+struct rte_hash *setup_hash()
 {
     struct rte_hash_parameters ipv4_l3fwd_hash_params = {
 		.name = NULL,
@@ -119,6 +120,8 @@ void setup_hash()
 	 * so that there won't be any runtime lookup miss
 	 */
 	fill_hash_table_from_trace(NULL);
+
+	return ipv4_l3fwd_em_lookup_struct[socketid];
 }
 
 // WARNING: This code is runs w/o problem on most Intel machines in lab,
@@ -142,7 +145,7 @@ struct ipv4_l3fwd_em_route {
 };
 
 static void
-convert_ipv4_5tuple(struct ipv4_5tuple *key1,
+convert_ipv4_5tuple_to_be(struct ipv4_5tuple *key1,
 		union ipv4_5tuple_host *key2)
 {
 	key2->ip_dst = rte_cpu_to_be_32(key1->ip_dst);
@@ -154,11 +157,24 @@ convert_ipv4_5tuple(struct ipv4_5tuple *key1,
 	key2->pad1 = 0;
 }
 
+static void
+convert_ipv4_5tuple(struct ipv4_5tuple *key1,
+		union ipv4_5tuple_host *key2)
+{
+	key2->ip_dst = key1->ip_dst;
+	key2->ip_src = key1->ip_src;
+	key2->port_dst = key1->port_dst;
+	key2->port_src = key1->port_src;
+	key2->proto = key1->proto;
+	key2->pad0 = 0;
+	key2->pad1 = 0;
+}
+
 static void print128_num(__m128i var) 
 {
     int64_t v64val[2];
     memcpy(v64val, &var, sizeof(v64val));
-    printf("%.16llx %.16llx\n", v64val[1], v64val[0]);
+    printf("%.16lx %.16lx\n", v64val[1], v64val[0]);
 }
 
 /* minor changes: hard code lookup_struct */
@@ -185,10 +201,10 @@ em_get_ipv4_dst_port(void *ipv4_hdr, struct rte_hash *flow_table)
 	ret = rte_hash_lookup(flow_table, (const void *)&key);
 	
 	#ifdef DEBUG
-	print("lookup key: ");
+	printf("lookup key: ");
 	print128_num(key.xmm);
 	printf("return value: %d\n", ret);
-	rte_delay_us(200);
+	rte_delay_ms(200);
 	#endif
 
 	// TODO: profile if runtime adding key has a large overhead
@@ -198,13 +214,15 @@ em_get_ipv4_dst_port(void *ipv4_hdr, struct rte_hash *flow_table)
 		// since xmm seems to have different endianness
 		struct ipv4_l3fwd_em_route entry;
 		union ipv4_5tuple_host newkey;
-		// TODO: check if be/le is needed
+		// here, what we've derived from the packet is already big endian
+		// so no need to convert them
 		entry.key.proto = real_ipv4_hdr->next_proto_id;
 		entry.key.ip_src = real_ipv4_hdr->src_addr;
 		entry.key.ip_dst = real_ipv4_hdr->dst_addr;
 		entry.key.port_src = real_tcp_hdr->src_port;
 		entry.key.port_dst = real_tcp_hdr->dst_port;
-		entry.if_out = (flow_cnt++) % worker_cnt;
+		// Round Robin the flows, instead of the packets
+		entry.if_out = (flow_cnt++) % num_clients;
 
 		convert_ipv4_5tuple(&entry.key, &newkey);
 		int addret = rte_hash_add_key(flow_table, (void *) &newkey);
@@ -214,15 +232,17 @@ em_get_ipv4_dst_port(void *ipv4_hdr, struct rte_hash *flow_table)
 		}
 		ipv4_l3fwd_out_if[addret] = entry.if_out;
 		#ifdef DEBUG
-		printf("sip: %u, dip: %u, sport: %d, dport: %d, proto: %d, key: ", 
-			entry.key.ip_src,
-			entry.key.ip_dst,
+		unsigned char *sip = (unsigned char *)(&entry.key.ip_src);
+		unsigned char *dip = (unsigned char *)(&entry.key.ip_dst);
+		printf("sip: %u.%u.%u.%u, dip: %u.%u.%u.%u, sport: %d, dport: %d, proto: %d, key: ", 
+			*sip, *(sip + 1), *(sip + 2), *(sip + 3),
+			*dip, *(dip + 1), *(dip + 2), *(dip + 3),
 			entry.key.port_src,
 			entry.key.port_dst,
 			entry.key.proto);
 		print128_num(newkey.xmm);
 		printf("interface out: %d\n", entry.if_out);
-		rte_delay_us(200);
+		rte_delay_ms(200);
 		#endif
 	} else if (ret < 0) {
 		fprintf(stderr, "invalid hash lookup argument\n");

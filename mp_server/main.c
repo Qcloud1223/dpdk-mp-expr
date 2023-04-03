@@ -33,10 +33,12 @@
 #include <rte_byteorder.h>
 #include <rte_malloc.h>
 #include <rte_string_fns.h>
+#include <rte_cycles.h>
 
 #include "common.h"
 #include "args.h"
 #include "init.h"
+#include "hash.h"
 
 /*
  * When doing reads from the NIC or the client queues,
@@ -120,7 +122,7 @@ do_stats_display(void)
 	}
 
 	/* Clear screen and move to top left */
-	printf("%s%s", clr, topLeft);
+	// printf("%s%s", clr, topLeft);
 
 	printf("PORTS\n");
 	printf("-----\n");
@@ -162,11 +164,11 @@ sleep_lcore(__rte_unused void *dummy)
 
 	/* Only one core should display stats */
 	if (rte_atomic32_test_and_set(&display_stats)) {
-		const unsigned sleeptime = 1;
+		const unsigned sleeptime = 10;
 		printf("Core %u displaying statistics\n", rte_lcore_id());
 
 		/* Longer initial pause so above printf is seen */
-		sleep(sleeptime * 3);
+		// sleep(sleeptime * 3);
 
 		/* Loop forever: sleep always returns 0 or <= param */
 		while (sleep(sleeptime) <= sleeptime)
@@ -217,31 +219,62 @@ flush_rx_queue(uint16_t client)
 /*
  * marks a packet down to be sent to a particular client process
  */
+// TODO: rename client to avoid misunderstanding
 static inline void
 enqueue_rx_packet(uint8_t client, struct rte_mbuf *buf)
 {
 	cl_rx_buf[client].buffer[cl_rx_buf[client].count++] = buf;
 }
 
+static int is_ipv4(struct rte_mbuf *pkt)
+{
+	struct rte_ether_hdr *eth_hdr;
+	uint16_t dst_port;
+	uint32_t tcp_or_udp;
+	uint32_t l3_ptypes;
+
+	eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+	tcp_or_udp = pkt->packet_type & (RTE_PTYPE_L4_TCP | RTE_PTYPE_L4_UDP);
+	l3_ptypes = pkt->packet_type & RTE_PTYPE_L3_MASK;
+
+	// TODO: check why the original version needs l3_ptypes
+	// if (tcp_or_udp && (l3_ptypes == RTE_PTYPE_L3_IPV4))
+	if (tcp_or_udp)
+		return 1;
+	else
+		return 0;
+}
+
+__thread struct rte_hash *flow_table;
+
 /*
  * This function takes a group of packets and routes them
  * individually to the client process. Very simply round-robins the packets
  * without checking any of the packet contents.
  */
+/* Q: decide the policy, instead of Round Robin */
 static void
 process_packets(uint32_t port_num __rte_unused,
-		struct rte_mbuf *pkts[], uint16_t rx_count)
+		struct rte_mbuf *pkts[], uint16_t rx_count,
+		struct rte_hash *h)
 {
 	uint16_t i;
-	uint8_t client = 0;
 
 	for (i = 0; i < rx_count; i++) {
-		enqueue_rx_packet(client, pkts[i]);
+		if (!is_ipv4(pkts[i])) {
+			rte_pktmbuf_free(pkts[i]);
+			continue;
+		}
 
-		if (++client == num_clients)
-			client = 0;
+		struct rte_ipv4_hdr *ipv4_hdr = rte_pktmbuf_mtod_offset(pkts[i], struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
+		uint16_t dst = em_get_ipv4_dst_port(ipv4_hdr, h);
+
+		// enqueue packet into calculated destination, instead of RR
+		// enqueue_rx_packet(client, pkts[i]);
+		enqueue_rx_packet(dst, pkts[i]);
 	}
 
+	// flush queue is essentially enqueue_bulk
 	for (i = 0; i < num_clients; i++)
 		flush_rx_queue(i);
 }
@@ -265,7 +298,7 @@ do_packet_forwarding(void)
 
 		/* Now process the NIC packets read */
 		if (likely(rx_count > 0))
-			process_packets(port_num, buf, rx_count);
+			process_packets(port_num, buf, rx_count, flow_table);
 
 		/* move to next port */
 		if (++port_num == ports->num_ports)
@@ -302,6 +335,8 @@ main(int argc, char *argv[])
 
 	/* put all other cores to sleep except main */
 	rte_eal_mp_remote_launch(sleep_lcore, NULL, SKIP_MAIN);
+
+	flow_table = setup_hash();
 
 	do_packet_forwarding();
 

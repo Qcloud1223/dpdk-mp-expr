@@ -32,6 +32,9 @@
 #include <rte_ethdev.h>
 #include <rte_string_fns.h>
 
+#include <rte_ip.h>
+#include <rte_tcp.h>
+
 #include "common.h"
 
 /* Number of packets to attempt to read from queue */
@@ -165,15 +168,24 @@ configure_output_ports(const struct port_info *ports)
 	if (ports->num_ports > RTE_MAX_ETHPORTS)
 		rte_exit(EXIT_FAILURE, "Too many ethernet ports. RTE_MAX_ETHPORTS = %u\n",
 				(unsigned)RTE_MAX_ETHPORTS);
-	for (i = 0; i < ports->num_ports - 1; i+=2){
-		uint16_t p1 = ports->id[i];
-		uint16_t p2 = ports->id[i+1];
-		output_ports[p1] = p2;
-		output_ports[p2] = p1;
+	// Note: DPDK always believe ports come in pairs, but we are using a full-duplex one
+	// So there is no need to fo this in pairs
+	// for (i = 0; i < ports->num_ports - 1; i+=2){
+	// 	uint16_t p1 = ports->id[i];
+	// 	uint16_t p2 = ports->id[i+1];
+	// 	output_ports[p1] = p2;
+	// 	output_ports[p2] = p1;
 
-		configure_tx_buffer(p1, MBQ_CAPACITY);
-		configure_tx_buffer(p2, MBQ_CAPACITY);
+	// 	configure_tx_buffer(p1, MBQ_CAPACITY);
+	// 	configure_tx_buffer(p2, MBQ_CAPACITY);
 
+	// }
+	for (int i = 0; i < ports->num_ports; i++) {
+		uint16_t p = ports->id[i];
+		// RX from port 0, TX to port 0
+		output_ports[p] = p;
+
+		configure_tx_buffer(p, MBQ_CAPACITY);
 	}
 }
 
@@ -189,7 +201,23 @@ handle_packet(struct rte_mbuf *buf)
 	const uint16_t in_port = buf->port;
 	const uint16_t out_port = output_ports[in_port];
 	struct rte_eth_dev_tx_buffer *buffer = tx_buffer[out_port];
+	#ifdef DEBUG
+	unsigned lcore_id = rte_lcore_id();
+	struct rte_ipv4_hdr *ip_hdr = rte_pktmbuf_mtod_offset(buf, struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
+	struct rte_tcp_hdr *tcp_hdr = rte_pktmbuf_mtod_offset(buf, struct rte_tcp_hdr *, sizeof(struct rte_ether_hdr) + sizeof(struct rte_tcp_hdr));
+	unsigned char *sip = (unsigned char *)(&ip_hdr->src_addr);
+	unsigned char *dip = (unsigned char *)(&ip_hdr->dst_addr);
+	printf("lcore #%u, receive pkt sip: %u.%u.%u.%u, dip, %u.%u.%u.%u, sport: %d, dport: %d, proto: %d\n",
+		lcore_id,
+		*sip, *(sip + 1), *(sip + 2), *(sip + 3),
+		*dip, *(dip + 1), *(dip + 2), *(dip + 3),
+		tcp_hdr->src_port, tcp_hdr->dst_port,
+		ip_hdr->next_proto_id);
+	rte_delay_ms(200);
+	#endif
+	// TODO: add actual packet processing
 
+	// It's important to note that client_id is used to index TX queue (second argument)
 	sent = rte_eth_tx_buffer(out_port, client_id, buffer, buf);
 	if (sent)
 		tx_stats->tx[out_port] += sent;

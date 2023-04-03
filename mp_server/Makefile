@@ -5,7 +5,7 @@
 APP = mp_server
 
 # all source are stored in SRCS-y
-SRCS-y := main.c init.c args.c
+SRCS-y := main.c init.c args.c hash.c
 
 CFLAGS += -I..
 
@@ -51,3 +51,7 @@ build:
 clean:
 	rm -f build/$(APP) build/$(APP)-static build/$(APP)-shared
 	test -d build && rmdir -p build || true
+
+debug: build/$(APP)-shared-debug
+build/$(APP)-shared-debug: $(SRCS-y) Makefile $(PC_FILE) | build
+	$(CC) $(CFLAGS) -DDEBUG -g $(SRCS-y) -o $@ $(LDFLAGS) $(LDFLAGS_SHARED)
