@@ -201,10 +201,11 @@ em_get_ipv4_dst_port(void *ipv4_hdr, struct rte_hash *flow_table)
 	ret = rte_hash_lookup(flow_table, (const void *)&key);
 	
 	#ifdef DEBUG
-	printf("lookup key: ");
-	print128_num(key.xmm);
-	printf("return value: %d\n", ret);
-	rte_delay_ms(200);
+	// We're sure the lookup key and store keys are the same, so don't print
+	// printf("lookup key: ");
+	// print128_num(key.xmm);
+	// printf("return value: %d\n", ret);
+	// rte_delay_ms(200);
 	#endif
 
 	// TODO: profile if runtime adding key has a large overhead
@@ -242,12 +243,27 @@ em_get_ipv4_dst_port(void *ipv4_hdr, struct rte_hash *flow_table)
 			entry.key.proto);
 		print128_num(newkey.xmm);
 		printf("interface out: %d\n", entry.if_out);
-		rte_delay_ms(200);
+		rte_delay_ms(400);
 		#endif
 	} else if (ret < 0) {
 		fprintf(stderr, "invalid hash lookup argument\n");
 		exit(-1);
 	}
+	#ifdef DEBUG
+	// in debug, print the packet even if it's hit
+	else {
+		unsigned char *sip = (unsigned char *)(&real_ipv4_hdr->src_addr);
+		unsigned char *dip = (unsigned char *)(&real_ipv4_hdr->dst_addr);
+		printf("sip: %u.%u.%u.%u, dip: %u.%u.%u.%u, sport: %d, dport: %d, proto: %d\n", 
+			*sip, *(sip + 1), *(sip + 2), *(sip + 3),
+			*dip, *(dip + 1), *(dip + 2), *(dip + 3),
+			real_tcp_hdr->src_port,
+			real_tcp_hdr->dst_port,
+			real_ipv4_hdr->next_proto_id);
+		printf("interface out: %d\n", ipv4_l3fwd_out_if[ret]);
+		rte_delay_ms(400);
+	}
+	#endif
 
 	return ipv4_l3fwd_out_if[ret];
 }

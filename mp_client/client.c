@@ -213,7 +213,8 @@ handle_packet(struct rte_mbuf *buf)
 		*dip, *(dip + 1), *(dip + 2), *(dip + 3),
 		tcp_hdr->src_port, tcp_hdr->dst_port,
 		ip_hdr->next_proto_id);
-	rte_delay_ms(200);
+	// Don't stall on client side, stall on server side is enough
+	// rte_delay_ms(200);
 	#endif
 	// TODO: add actual packet processing
 
