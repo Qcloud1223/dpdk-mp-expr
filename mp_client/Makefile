@@ -49,7 +49,7 @@ build:
 
 .PHONY: clean
 clean:
-	rm -f build/$(APP) build/$(APP)-static build/$(APP)-shared
+	rm -f build/$(APP) build/$(APP)-static build/$(APP)-shared build/$(APP)-shared-debug
 	test -d build && rmdir -p build || true
 
 debug: build/$(APP)-shared-debug
