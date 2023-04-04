@@ -245,6 +245,7 @@ em_get_ipv4_dst_port(void *ipv4_hdr, struct rte_hash *flow_table)
 		printf("interface out: %d\n", entry.if_out);
 		rte_delay_ms(400);
 		#endif
+		return entry.if_out;
 	} else if (ret < 0) {
 		fprintf(stderr, "invalid hash lookup argument\n");
 		exit(-1);
